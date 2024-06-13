@@ -1,5 +1,6 @@
 import rospy
 from sensor_msgs.msg import Image
+from geometry_msgs.msg import Point
 from cv_bridge import CvBridge
 
 import tensorflow as tf
@@ -10,72 +11,152 @@ import numpy as np
 PATH_TO_SAVED_MODEL = "/home/irizqy/catkin_ws/src/ros_ta/detector/exported_models/saved_model"
 HEIGHT, WIDTH = (320, 320)
 CLASSES = CLASSES = {
-    1: "goal",
-    2: "ball",
-    3: "person"
+    1: "ball",
+    2: "person",
+    3: "goal"
 }
 
 
-detector = tf.saved_model.load(PATH_TO_SAVED_MODEL)
+class BallDetection:
+	def __init__(self):
+		self.detector = tf.saved_model.load(PATH_TO_SAVED_MODEL)
 
+		self.ball_pose = Point()
+		self.bridge = CvBridge()
+		self.center = []
+		self.distance = None
 
-def im_to_tensor(im, detector):
-    im_arr = cv.cvtColor(im, cv.COLOR_BGR2RGB)
-    im_arr = cv.resize(im_arr, (320, 320))
+		# Pub/Sub
+		rospy.Subscriber("/camera/color/image_raw", Image, self.get_camera_image_callback)
+		rospy.Subscriber('/camera/depth/image_raw', Image, self.depth_callback)
 
-    input_tensor = tf.convert_to_tensor(im_arr)
-    input_tensor = input_tensor[tf.newaxis, ...]
+		self.pub_im_blob = rospy.Publisher('/object-blob', Image, queue_size=1)
+		self.ball_pose_pub = rospy.Publisher("/ball_pose", Point, queue_size=1)
 
-    return im_arr, detector(input_tensor)
+	def get_camera_image_callback(self, img):
+		if img:
+				# Convert the image message to a NumPy array
+				raw_image = self.bridge.imgmsg_to_cv2(img)
 
-def detect_object(im, detector):
-    im_arr, detections = im_to_tensor(im, detector)
-    dets = np.where(detections["detection_scores"][0] >= .5)[0]
-    is_mask, is_coat, is_gloves = False, False, False
-    is_satisfied = False
-    for i in dets:
-        ymin, xmin, ymax, xmax = detections["detection_boxes"][0][i]
-        raw_label = int(detections["detection_classes"][0][i].numpy())
-        score = np.round(detections["detection_scores"][0][i].numpy() * 100, 1)
-        label = CLASSES[raw_label]
-        print(label)
-        (left, right, top, bottom) = (xmin*WIDTH, xmax*WIDTH, ymin*HEIGHT, ymax*HEIGHT)
-        cv.rectangle(im_arr, (int(left), int(top)),
-                     (int(right), int(bottom)), (0, 255, 0), 2)
-        label_pos = (int(left), int(top)-20)
-        cv.putText(im_arr, f"Class: {label}", label_pos,
-                   cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 2)
-        cv.putText(im_arr, f"Confidence: {score}%", (
-            label_pos[0], label_pos[1] + 15), cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 2)
-            
-        if label == "goal":
-            is_coat = not is_coat
-        elif label == "ball":
-            is_mask = not is_mask
-        elif label == "person":
-            is_gloves = not is_gloves
+				detected_im = self.detect_object(raw_image)
 
-    if is_coat and is_mask:
-        is_satisfied = True
+				# Show image
+				cv.imshow('Test', cv.cvtColor(detected_im, cv.COLOR_RGB2BGR))
+				cv.waitKey(1)
 
-    return cv.cvtColor(im_arr, cv.COLOR_RGB2BGR), (is_gloves, is_mask, is_coat, is_satisfied)
+	def depth_callback(self, img_depth):
+		try:
+			# Convert ROS Image message to OpenCV image
+			depth_image = self.bridge.imgmsg_to_cv2(img_depth, desired_encoding="passthrough")
+			depth_image = cv.resize(depth_image, (320, 320))
+			
+			if len(self.center) > 0:
+				self.distance = depth_image[self.center[1], self.center[0]]
+				# print(self.distance)
 
-def get_camere_image_callback(img):
-  if img:
-    # Create an instance of CvBridge
-    bridge = CvBridge()
+			# # Your object detection code
+			# # Replace this with your actual object detection code
+			# detected_objects = [(100, 100, 200, 200)]  # Placeholder values
 
-    # Convert the image message to a NumPy array
-    raw_image = bridge.imgmsg_to_cv2(img)
+			# for box in detected_objects:
+			# 		# Calculate the distance to the center of the detected object
+			# 		x_center = (box[0] + box[2]) // 2
+			# 		y_center = (box[1] + box[3]) // 2
+			# 		distance = depth_image[y_center, x_center]
 
-    detected_im, labels = detect_object(raw_image, detector)
+			# 		print(depth_image)
+			# 		print(f"Distance to detected object: {distance} meters")
 
-    cv.imshow('Test', cv.cvtColor(detected_im, cv.COLOR_RGB2BGR))
-    cv.waitKey(1)
+			# 		# Use the distance information for your robot's control logic
 
-image_sub = rospy.Subscriber('camera/color/image_raw', Image, get_camere_image_callback)
+		except Exception as e:
+			print(e)
+
+	def im_to_tensor(self, im, detector):
+		im_arr = cv.cvtColor(im, cv.COLOR_BGR2RGB)
+		im_arr = cv.resize(im_arr, (320, 320))
+
+		input_tensor = tf.convert_to_tensor(im_arr)
+		input_tensor = input_tensor[tf.newaxis, ...]
+
+		return im_arr, detector(input_tensor)
+	
+	def calculate_object_pose(self, object_center):
+		# Camera intrinsic parameters
+		fx = 500.0  # focal length in x direction
+		fy = 500.0  # focal length in y direction
+		cx = 160.0  # principal point in x direction
+		cy = 160.0  # principal point in y direction
+
+		# Known parameters
+		baseline = 0.1  # Example baseline distance between the two cameras in meters
+		focal_length = 250  # Example focal length in pixels
+
+		# Disparity value corresponding to the detected object
+		disparity = 50  # Example disparity value
+
+		# Calculate object depth
+		object_depth = baseline * focal_length / disparity
+
+		# Calculate normalized image coordinates
+		normalized_x = (object_center[0] - cx) / fx
+		normalized_y = (object_center[1] - cy) / fy
+
+		# Calculate object's 3D position in camera coordinates
+		self.ball_pose.x = normalized_x * object_depth
+		self.ball_pose.y = normalized_y * object_depth
+		self.ball_pose.z = object_depth
+
+		self.ball_pose_pub.publish(self.ball_pose)
+
+		# print("Object Position (Camera Coordinates):", object_camera_x, object_camera_y, object_camera_z)
+
+	def detect_object(self, im):
+		im_arr, detections = self.im_to_tensor(im, self.detector)
+		dets = np.where(detections["detection_scores"][0] >= .5)[0]
+
+		o2o_distance = 0
+
+		for i in dets:
+				ymin, xmin, ymax, xmax = detections["detection_boxes"][0][i]
+				raw_label = int(detections["detection_classes"][0][i].numpy())
+				score = np.round(
+						detections["detection_scores"][0][i].numpy() * 100, 1)
+				label = CLASSES[raw_label]
+				(left, right, top, bottom) = (
+						xmin*WIDTH, xmax*WIDTH, ymin*HEIGHT, ymax*HEIGHT)
+				# cv.rectangle(im_arr, (int(left), int(top)),
+				#              (int(right), int(bottom)), (0, 255, 0), 2)
+
+				# radius = int(min((xmax - xmin) * WIDTH, (ymax - ymin) * HEIGHT) * 0.5)
+
+				center = (int((left+right)/2)), int((top+bottom)/2)
+				# self.calculate_object_pose(center)
+				self.center = center
+				# Draw the circle on the image
+				cv.circle(im_arr, center, 3, (255, 0, 0), -1)
+
+				label_pos = (int(left) - o2o_distance, int(top)-50)
+				# label_pos = (0, 0)
+				cv.putText(im_arr, f"Class: {label}", label_pos,
+										cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+				cv.putText(im_arr, f"Confidence: {score}%", (
+						label_pos[0], label_pos[1] + 15), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+				cv.putText(im_arr, f"Center Pose: {center[0]}, {center[1]}", (
+						label_pos[0], label_pos[1] + 30), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+				cv.putText(im_arr, f"x, y, z: {self.ball_pose.x}, {self.ball_pose.y}, {self.ball_pose.z}", (
+						label_pos[0], label_pos[1] + 45), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+				if self.distance:
+					cv.putText(im_arr, f"Distance to object: {self.distance}", (
+							label_pos[0], label_pos[1] + 60), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+					
+				o2o_distance += 100
+
+		return cv.cvtColor(im_arr, cv.COLOR_RGB2BGR)
+
 
 if __name__ == "__main__":
-  rospy.init_node('kinetic_camera_node')
+    rospy.init_node('kinetic_camera_node')
+    ball_detection = BallDetection()
 
-  rospy.spin()
+    rospy.spin()

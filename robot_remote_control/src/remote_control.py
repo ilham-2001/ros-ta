@@ -5,7 +5,7 @@ import random
 import string
 
 
-PERPINDAHAN = 100
+PERPINDAHAN = 0.1
 
 
 pub = rospy.Publisher('task', Point, queue_size=1)
@@ -21,10 +21,12 @@ def get_random_string(length):
 def callback(data):
   target = Point()
   if data.buttons[5] == 0:
-      target.x = -PERPINDAHAN*data.axes[0]
-      target.y = PERPINDAHAN*data.axes[1]
+    target.x = PERPINDAHAN*data.axes[0]
+    target.y = PERPINDAHAN*data.axes[1]
   else:
-      target.z = 180*data.axes[0]
+    target.z = data.axes[0]
+
+  # print(target.z)
 
   pub.publish(target)
 

@@ -1,11 +1,13 @@
 import rospy
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import Point
+from std_msgs.msg import String
 from cv_bridge import CvBridge
 
 import tensorflow as tf
 import cv2 as cv
 import numpy as np
+import base64
 
 
 PATH_TO_SAVED_MODEL = "/home/irizqy/catkin_ws/src/ros_ta/detector/exported_models/saved_model"
@@ -30,7 +32,7 @@ class BallDetection:
 		rospy.Subscriber("/camera/color/image_raw", Image, self.get_camera_image_callback)
 		rospy.Subscriber('/camera/depth/image_raw', Image, self.depth_callback)
 
-		self.pub_im_blob = rospy.Publisher('/object-blob', Image, queue_size=1)
+		self.pub_im_blob = rospy.Publisher('/object-blob', String, queue_size=1)
 		self.ball_pose_pub = rospy.Publisher("/ball_pose", Point, queue_size=1)
 
 	def get_camera_image_callback(self, img):
@@ -39,6 +41,9 @@ class BallDetection:
 				raw_image = self.bridge.imgmsg_to_cv2(img)
 
 				detected_im = self.detect_object(raw_image)
+				_, buffer = cv.imencode('.jpg', detected_im)
+				image_as_str = base64.b64encode(buffer).decode('utf-8')
+				self.pub_im_blob.publish(image_as_str)
 
 				# Show image
 				cv.imshow('Test', cv.cvtColor(detected_im, cv.COLOR_RGB2BGR))

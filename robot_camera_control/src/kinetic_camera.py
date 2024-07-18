@@ -1,7 +1,7 @@
 import rospy
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import Point
-from std_msgs.msg import String
+from std_msgs.msg import Float32
 from ta_msgs.msg import ObjectInfo
 from cv_bridge import CvBridge
 
@@ -31,34 +31,50 @@ class BallDetection:
 		self.detector = tf.saved_model.load(PATH_TO_SAVED_MODEL)
 
 		self.ball_pose = Point()
+		self.object_info = ObjectInfo()
+		self.detect_thresh = 0.5
 		self.bridge = CvBridge()
 		self.center = []
 		self.distance = None
 
+		self.fov_h = 60
+		self.fov_v = 70
+		self.cam_h = 0.4
+
 		# Pub/Sub
 		rospy.Subscriber("/camera/color/image_raw", Image, self.get_camera_image_callback)
 		rospy.Subscriber('/camera/depth/image_raw', Image, self.depth_callback)
+		rospy.Subscriber('/detect_param/detect_threshold', Float32, self.detect_threshold_callback)
+		rospy.Subscriber('/detect_param/fovh', Float32, self.set_fovh_callback)
+		rospy.Subscriber('/detect_param/fovv', Float32, self.set_fovv_callback)
+		rospy.Subscriber('/detect_param/camh', Float32, self.set_camh_callback)
 
 		# self.pub_im_blob = rospy.Publisher('/object-blob', String, queue_size=1)
-		self.pub_im_image = rospy.Publisher('/detected_image_blob', Image, queue_size=1)
+		self.pub_im_image = rospy.Publisher('/robot/detected_image_blob', Image, queue_size=1)
 		self.ball_pose_pub = rospy.Publisher("/ball_pose", Point, queue_size=1)
+		self.object_info_pub = rospy.Publisher("/robot/object_info", ObjectInfo, queue_size=1)
+
 
 	def get_camera_image_callback(self, img):
 		if img:
 				# Convert the image message to a NumPy array
 				raw_image = self.bridge.imgmsg_to_cv2(img)
-				# cv.imshow("test", cv.cvtColor(raw_image, cv.COLOR_BGR2RGB))
 				# cv.imwrite(f"/home/irizqy/Pictures/more_data/test-{time.time()}.jpg", cv.cvtColor(raw_image, cv.COLOR_BGR2RGB))
 				detected_im = self.detect_object(raw_image)
 				msg_img = self.bridge.cv2_to_imgmsg(detected_im, "bgr8")
 				self.pub_im_image.publish(msg_img)
-				# _, buffer = cv.imencode('.jpg', detected_im)
-				# image_as_str = base64.b64encode(buffer).decode('utf-8')
-				# self.pub_im_blob.publish(image_as_str)
 
-				# Show image
-				# cv.imshow('Test', cv.cvtColor(detected_im, cv.COLOR_RGB2BGR))
-				# cv.waitKey(1)
+	def detect_threshold_callback(self, msg):
+		self.detect_thresh = msg.data
+
+	def set_fovh_callback(self, msg):
+		self.fov_h = msg.data
+
+	def set_fovv_callback(self, msg):
+		self.fov_v = msg.data
+
+	def set_camh_callback(self, msg):
+		self.cam_h = msg.data
 
 	def calculate_distance(self, fov_h, fov_v, img_width, img_height, bbox_center_x, bbox_center_y, camera_height):
 			# Convert FoV to radians
@@ -85,22 +101,6 @@ class BallDetection:
 			
 			if len(self.center) > 0:
 				self.distance = np.round(float(depth_image[self.center[1], self.center[0]]), 3)
-				# print(self.distance)
-
-			# # Your object detection code
-			# # Replace this with your actual object detection code
-			# detected_objects = [(100, 100, 200, 200)]  # Placeholder values
-
-			# for box in detected_objects:
-			# 		# Calculate the distance to the center of the detected object
-			# 		x_center = (box[0] + box[2]) // 2
-			# 		y_center = (box[1] + box[3]) // 2
-			# 		distance = depth_image[y_center, x_center]
-
-			# 		print(depth_image)
-			# 		print(f"Distance to detected object: {distance} meters")
-
-			# 		# Use the distance information for your robot's control logic
 
 		except Exception as e:
 			print(e)
@@ -147,10 +147,15 @@ class BallDetection:
 	def detect_object(self, im):
 		start = time.time()
 		im_arr, detections = self.im_to_tensor(im, self.detector)
-		dets = np.where(detections["detection_scores"][0] >= .5)[0]
+		dets = np.where(detections["detection_scores"][0] >= self.detect_thresh)[0]
 		time_to_detect = np.round(time.time() - start, 4)
 
 		o2o_distance = 0
+
+		if len(dets) == 0:
+			self.object_info.label.data = ""
+			self.object_info.distance.data = 0.0
+			self.object_info_pub.publish(self.object_info)
 
 		for i in dets:
 				ymin, xmin, ymax, xmax = detections["detection_boxes"][0][i]
@@ -166,9 +171,15 @@ class BallDetection:
 				# radius = int(min((xmax - xmin) * WIDTH, (ymax - ymin) * HEIGHT) * 0.5)
 
 				center = (int((left+right)/2)), int((top+bottom)/2)
-				# self.calculate_object_pose(center)
 				self.center = center
-				# print(self.calculate_distance(60, 70, 320, 320, center[0], center[1], 0.45))
+				distance = self.calculate_distance(self.fov_h, self.fov_v, 320, 320, center[0], center[1], self.cam_h)
+
+				self.object_info.label.data = label
+				self.object_info.accuracy.data = score
+				self.object_info.distance.data = distance
+				self.object_info.time_to_detect.data = time_to_detect
+				self.object_info_pub.publish(self.object_info)
+
 				# Draw the circle on the image
 				cv.circle(im_arr, center, 10, (255, 0, 0), 2)
 
@@ -183,9 +194,9 @@ class BallDetection:
 				cv.putText(im_arr, f"time to detect: {time_to_detect}", (
 						label_pos[0], label_pos[1] + 45), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
 				if self.distance:
-					cv.putText(im_arr, f"Distance to object: {self.distance}", (
+					cv.putText(im_arr, f"Distance to object: {distance}", (
 							label_pos[0], label_pos[1] + 60), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
-					# print(self.distance)
+
 				o2o_distance += 100
 
 		return cv.cvtColor(im_arr, cv.COLOR_RGB2BGR)

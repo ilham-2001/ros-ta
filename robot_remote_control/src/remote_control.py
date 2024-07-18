@@ -8,7 +8,7 @@ import string
 PERPINDAHAN = 0.1
 
 
-pub = rospy.Publisher('task', Point, queue_size=1)
+pub = rospy.Publisher('/control/remote_task', Point, queue_size=1)
 
 
 def get_random_string(length):

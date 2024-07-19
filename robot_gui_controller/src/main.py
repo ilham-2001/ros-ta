@@ -28,13 +28,13 @@ class ROSTAControllerApplication(QMainWindow):
 
         self.bridge = CvBridge()
         self.catch_button_clicked = False
+        self.cursor = self.action_log.textCursor()
 
         # Initialize ROS node
         rospy.init_node('ros_qt_image_viewer', anonymous=True)
 
         # ROS Subscriber
         rospy.Subscriber('/robot/detected_image_blob', Image, self.display_frame)
-        rospy.Subscriber('/robot/object_info', ObjectInfo, self.get_detected_object_info)
 
         # ROS Publisher
         self.pub_detect_thresh = rospy.Publisher('/detect_param/detect_threshold', Float32, queue_size=1)
@@ -75,16 +75,27 @@ class ROSTAControllerApplication(QMainWindow):
     def on_click_start_gazebo_button(self):
         self.start_gazebo_button.setEnabled(False)
         subprocess.Popen("roslaunch gazebo_ros empty_world.launch", shell=True)
+        self.action_log.setTextCursor(self.cursor)
+        log = "<span style='color: #3c763d'> roscore and gazebo started</span>"
+        self.action_log.insertHtml(log+'<br />')
+
 
     def on_click_start_ODP_button(self):
         self.start_camera_button.setEnabled(False)
         subprocess.Popen("rosrun robot_camera_control kinetic_camera.py", shell=True)
+        self.action_log.setTextCursor(self.cursor)
+        log = "<span style='color: #3c763d'>object detection program has started</span>"
+        self.action_log.insertHtml(log+'<br />')
 
     def on_click_start_remote_ctrl_button(self):
         self.start_remote_button.setEnabled(False)
-        subprocess.Popen("rosrun joy joy_node", shell=True)
-        subprocess.Popen("rosrun robot_remote_control remote_control.py task:=/task", shell=True)
+        # Uncomment this to enable joystick controller
+        # subprocess.Popen("rosrun joy joy_node", shell=True)
+        # subprocess.Popen("rosrun robot_remote_control remote_control.py task:=/task", shell=True)
         subprocess.Popen("rosrun robot_kinematic_control kinematic_control.py", shell=True)
+        self.action_log.setTextCursor(self.cursor)
+        log = "<span style='color: #3c763d'>controller node started</span>"
+        self.action_log.insertHtml(log+'<br />')
 
     def on_click_catch_button(self):
         if not self.catch_button_clicked:
@@ -138,14 +149,6 @@ class ROSTAControllerApplication(QMainWindow):
 
     def on_click_control_rotate_cw_button(self):
         self.pub_gui_rccw.publish("rcw")
-
-    def get_detected_object_info(self, msg):
-        if msg:
-            log = f"<span style='color: #3c763d'>{msg.label.data} is detected ({msg.accuracy.data}) {msg.distance.data} meters away [done {msg.time_to_detect.data}]</span>"
-            QMetaObject.invokeMethod(self.action_log, "insertHtml", Qt.QueuedConnection, Q_ARG(str, log + '<br />'))
-
-    def ros_spin(self):
-        rospy.spin()
 
     def display_frame(self, img_msg):
         try:

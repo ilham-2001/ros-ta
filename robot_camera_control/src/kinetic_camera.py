@@ -84,14 +84,14 @@ class BallDetection:
 			# Calculate angular position
 			theta_x = ((bbox_center_x - (img_width / 2)) / (img_width / 2)) * (fov_h_rad / 2)
 			theta_y = ((bbox_center_y - (img_height / 2)) / (img_height / 2)) * (fov_v_rad / 2)
-			
+
 			# Estimate distance
 			if theta_y != 0:
-					distance = camera_height / math.tan(theta_y)
+					distance = camera_height / math.tan(np.abs(theta_y))
 			else:
 					distance = float('inf')  # Object is directly in front of the camera
 
-			return distance
+			return np.round(distance, 4)
 
 	def depth_callback(self, img_depth):
 		try:
@@ -176,7 +176,7 @@ class BallDetection:
 
 				self.object_info.label.data = label
 				self.object_info.accuracy.data = score
-				self.object_info.distance.data = distance
+				self.object_info.distance.data = self.distance
 				self.object_info.time_to_detect.data = time_to_detect
 				self.object_info_pub.publish(self.object_info)
 
@@ -185,17 +185,19 @@ class BallDetection:
 
 				label_pos = (int(left) - o2o_distance, int(top)-50)
 				# label_pos = (0, 10)
-				cv.putText(im_arr, f"Class: {label}", label_pos,
-										cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
-				cv.putText(im_arr, f"Confidence: {score}%", (
-						label_pos[0], label_pos[1] + 15), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
-				cv.putText(im_arr, f"Center Pose: {center[0]}, {center[1]}", (
-						label_pos[0], label_pos[1] + 30), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
-				cv.putText(im_arr, f"time to detect: {time_to_detect}", (
-						label_pos[0], label_pos[1] + 45), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+				# cv.putText(im_arr, f"Class: {label}", label_pos,
+				# 						cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+				# cv.putText(im_arr, f"Confidence: {score}%", (
+				# 		label_pos[0], label_pos[1] + 15), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+				# cv.putText(im_arr, f"Center Pose: {center[0]}, {center[1]}", (
+				# 		label_pos[0], label_pos[1] + 30), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+				# cv.putText(im_arr, f"time to detect: {time_to_detect}", (
+				# 		label_pos[0], label_pos[1] + 45), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
 				if self.distance:
-					cv.putText(im_arr, f"Distance to object: {distance}", (
-							label_pos[0], label_pos[1] + 60), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+					# cv.putText(im_arr, f"Distance to object: {self.distance}", (
+					# 		label_pos[0], label_pos[1] + 60), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
+					cv.putText(im_arr, f"d: {distance}", (
+							int(left), int(top)), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 2)
 
 				o2o_distance += 100
 
